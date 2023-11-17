@@ -4,8 +4,25 @@ import numpy as np                        # fundamental package for scientific c
 from IPython.display import clear_output  # Clear the screen
 import matplotlib.pyplot as plt           # 2D plotting library producing publication quality figures
 import pyrealsense2 as rs                 # Intel RealSense cross-platform open-source API
+import serial
 print("Environment Ready")
 
+def serial_connect():
+    # ser_name = '/dev/ttyACM0'
+    ser_name = '/dev/ttyACM0'
+    try:
+        try:
+            ser = serial.Serial(ser_name, 57600)
+        except:
+            serial.Serial(ser_name, 57600).close()
+            ser = serial.Serial(ser_name,57600,timeout=0.1) 
+        finally:
+            print('ser:', ser)
+            return ser
+    except:
+        print('Serial error')
+        return "no serial"
+    
 
 def relative_distance(dist, pos, FOV, stream_size):
     fov_degrees = FOV[0]
@@ -17,10 +34,29 @@ def relative_distance(dist, pos, FOV, stream_size):
 
     return [dist, real_pos]
 
-def send_msg(dist, pos):
-    pass
+def send_msg(dist, pos, ser, start):
+    state = 'x'
+    # turn left until detect object
+    if start and dist == -777 and pos == -777:
+        state = 'd'
+    # straight
+    elif dist >= 20 and abs(pos) <= 20:
+        state = 'c'
+    # turn left
+    elif pos < -20:
+        state = 'd'
+    # turn right
+    elif pos > 20:
+        state = 'c'
+    # stop
+    elif dist < 20:
+        state = 'd'
 
-def stream():
+    if ser!='' or ser!=None:
+        print("SEND MSG:", state.encode('utf-8'))
+        ser.write(state.encode('utf-8'))
+
+def stream(ser):
 
     FPS = 30
     stream_size = [640, 480]
@@ -60,8 +96,8 @@ def stream():
 
     try:
         msg_period_temp = msg_period
+        start = True
         while True:
-
             # Wait for a coherent pair of frames: depth and color
             frames = pipeline.wait_for_frames()
             depth_frame = frames.get_depth_frame()
@@ -134,13 +170,17 @@ def stream():
                 coord = relative_distance(average_depth, cX, FOV, stream_size)
 
                 # print("Average Depth of Red Area: {:.2f}mm".format(average_depth), end='\r')
-                print("Relative Coordinates(cm): {:.2f} (distance), {:.2f} (position)".format(coord[0]/10, coord[1]/10), end='\r')
+                # print("Relative Coordinates(cm): {:.2f} (distance), {:.2f} (position)".format(coord[0]/10, coord[1]/10), end='\r')
+                print("Relative Coordinates(cm): {:.2f} (distance), {:.2f} (position)".format(coord[0]/10, coord[1]/10))
                 msg_period_temp = msg_period_temp-1 
                 if msg_period_temp == 0:
-                    send_msg(coord[0]/10, coord[1]/10)
+                    send_msg(coord[0]/10, coord[1]/10, ser, start)
                     msg_period_temp = msg_period
+                    start = False
             else:
-                print("Average Depth of Red Area: No red area detected.", end='\r')
+                # print("Average Depth of Red Area: No red area detected.", end='\r')
+                print("Average Depth of Red Area: No red area detected.")
+                send_msg(-777, -777, ser, start)
 
             # 이미지 크기 조정 및 결합
             depth_colormap_dim = depth_colormap.shape
@@ -151,6 +191,7 @@ def stream():
                 images = np.hstack((resized_color_image, depth_colormap, resized_red_image, red_depth))
             else:
                 images = np.hstack((color_image, depth_colormap, red_image, red_depth))
+                # images = np.vstack((np.hstack((color_image, depth_colormap)), np.hstack((red_image, red_depth))))
 
             # Show images
             cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
@@ -167,4 +208,13 @@ def stream():
 
 
 if __name__=="__main__":
-    stream()
+    use_serial = True
+    if use_serial:
+        ser = serial_connect()
+        while ser == "no serial":
+            ser = serial_connect()
+            print("serial:", ser)
+        stream(ser)
+    else:
+        ser = ''
+        stream(ser)
