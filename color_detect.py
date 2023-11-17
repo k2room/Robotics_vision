@@ -34,27 +34,26 @@ def relative_distance(dist, pos, FOV, stream_size):
 
     return [dist, real_pos]
 
-def send_msg(dist, pos, ser, start):
+def send_msg(dist, pos, start):
     state = 'x'
+    threshold = 35
     # turn left until detect object
     if start and dist == -777 and pos == -777:
-        state = 'd'
+        state = 't'
     # straight
-    elif dist >= 20 and abs(pos) <= 20:
-        state = 'c'
+    elif dist >= 20 and abs(pos) <= threshold:
+        state = 'g'
     # turn left
-    elif pos < -20:
-        state = 'd'
+    elif pos < -threshold:
+        state = 't'
     # turn right
-    elif pos > 20:
-        state = 'c'
+    elif pos > threshold:
+        state = 't'
     # stop
     elif dist < 20:
-        state = 'd'
+        state = 'x'
 
-    if ser!='' or ser!=None:
-        print("SEND MSG:", state.encode('utf-8'))
-        ser.write(state.encode('utf-8'))
+    return state
 
 def stream(ser):
 
@@ -97,6 +96,7 @@ def stream(ser):
     try:
         msg_period_temp = msg_period
         start = True
+        msg_seq = []
         while True:
             # Wait for a coherent pair of frames: depth and color
             frames = pipeline.wait_for_frames()
@@ -106,32 +106,6 @@ def stream(ser):
                 continue
             
             """
-                RGB & Depth stream code
-            """
-            # # Convert images to numpy arrays
-            # depth_image = np.asanyarray(depth_frame.get_data())
-            # color_image = np.asanyarray(color_frame.get_data())
-
-            # # Apply colormap on depth image (image must be converted to 8-bit per pixel first)
-            # depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
-
-            # depth_colormap_dim = depth_colormap.shape
-            # color_colormap_dim = color_image.shape
-
-            # # If depth and color resolutions are different, resize color image to match depth image for display
-            # if depth_colormap_dim != color_colormap_dim:
-            #     resized_color_image = cv2.resize(color_image, dsize=(depth_colormap_dim[1], depth_colormap_dim[0]), interpolation=cv2.INTER_AREA)
-            #     images = np.hstack((resized_color_image, depth_colormap))
-            # else:
-            #     images = np.hstack((color_image, depth_colormap))
-
-            # # Show images
-            # cv2.namedWindow('RealSense', cv2.WINDOW_AUTOSIZE)
-            # cv2.imshow('RealSense', images)
-            # if cv2.waitKey(1) & 0xFF == 27: # 27은 ESC 키의 ASCII 코드
-            #     break
-
-            """
                 RGB & Depth stream code + Red mask
             """
             # Convert images to numpy arrays
@@ -140,8 +114,8 @@ def stream(ser):
             depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
 
             # Red color mask
-            lower_red = np.array([0, 0, 100]) # 빨간색 범위의 하한
-            upper_red = np.array([50, 50, 255]) # 빨간색 범위의 상한
+            lower_red = np.array([45, 20, 105]) # 빨간색 범위의 하한
+            upper_red = np.array([60, 35, 255]) # 빨간색 범위의 상한
             red_mask = cv2.inRange(color_image, lower_red, upper_red)
 
             # 모폴로지 연산으로 노이즈 제거
@@ -171,16 +145,20 @@ def stream(ser):
 
                 # print("Average Depth of Red Area: {:.2f}mm".format(average_depth), end='\r')
                 # print("Relative Coordinates(cm): {:.2f} (distance), {:.2f} (position)".format(coord[0]/10, coord[1]/10), end='\r')
-                print("Relative Coordinates(cm): {:.2f} (distance), {:.2f} (position)".format(coord[0]/10, coord[1]/10))
-                msg_period_temp = msg_period_temp-1 
-                if msg_period_temp == 0:
-                    send_msg(coord[0]/10, coord[1]/10, ser, start)
-                    msg_period_temp = msg_period
-                    start = False
+                # print("Relative Coordinates(cm): {:.2f} (distance), {:.2f} (position)".format(coord[0]/10, coord[1]/10))
+                message = send_msg(coord[0]/10, coord[1]/10, start)
+                start = False
             else:
                 # print("Average Depth of Red Area: No red area detected.", end='\r')
                 print("Average Depth of Red Area: No red area detected.")
-                send_msg(-777, -777, ser, start)
+                message = send_msg(-777, -777, start)
+            msg_seq.append(message)
+
+            if len(msg_seq) == 5:
+                print("SEND MSG:", max(msg_seq).encode('utf-8'))
+                if ser !='':
+                    ser.write(max(msg_seq).encode('utf-8'))
+                msg_seq = []
 
             # 이미지 크기 조정 및 결합
             depth_colormap_dim = depth_colormap.shape
@@ -205,7 +183,6 @@ def stream(ser):
         pipeline.stop()
         cv2.destroyWindow('RealSense')
     
-
 
 if __name__=="__main__":
     use_serial = True
