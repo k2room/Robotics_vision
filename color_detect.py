@@ -12,26 +12,26 @@ deg2rad = np.pi/180.0
 def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     # ||| ---------- director settings ---------- |||
     # NAV. tune
-    tht_g_CRT1 = deg2rad*65.0
-    tht_g_CRT2 = deg2rad*35.0
-    mod_tht_g_CRT = 1.4 # metre
+    tht_g_CRT1 = deg2rad*75.0
+    tht_g_CRT2 = deg2rad*45.0
+    mod_tht_g_CRT = 0.3 # metre
 
-    r_DIR_pass = 0.5
+    r_DIR_pass = 1.2
     mod_r_DIR = 0.0000000000001 # metre
-    tht_DIR_pass = deg2rad*85.0
+    tht_DIR_pass = deg2rad*155.0
 
     tht_p_DECI = deg2rad*5.0
     tht_g_DECI = deg2rad*2.0
 
     tht_CRT = np.array([12.0, 15.0, 30.0, 45.0, 60.0])
-    gamma = 1.4
+    gamma = 1.2
 
     # VC_set index
     # ! if new index is added, add it also in the idx_set
     idx_st = 'g'
 
-    idx_prl_L15 = 'q'
-    idx_prl_R15 = 'c'
+    idx_prl_L15 = 'o'
+    idx_prl_R15 = 'p'
     idx_prl_L30 = 'q'
     idx_prl_R30 = 'c'
     idx_prl_L45 = 'w'
@@ -196,10 +196,10 @@ def relative_distance(dist, pos, FOV, stream_size):
     return [dist, real_pos]
 
 def send_msg(dist, pos, start, last_turn, obj_dist, obj_pos, ex_red, ex_green):
-    off_g = pos+0.18
+    off_g = pos
     dst_g = dist
     flg_g = ex_red
-    off_p = obj_pos+0.35
+    off_p = obj_pos
     dst_p = obj_dist
     flg_p = ex_green
     print(off_g, dst_g, flg_g, off_p, dst_p, flg_p)
@@ -285,7 +285,7 @@ def stream(ser, use_window):
         ex_green = False
         msg_seq = []
         last_turn = ''
-        p = 200
+        p = 30
         n_obj = 1
         while True:
             # Wait for a coherent pair of frames: depth and color
@@ -304,13 +304,13 @@ def stream(ser, use_window):
             depth_colormap = cv2.applyColorMap(cv2.convertScaleAbs(depth_image, alpha=0.03), cv2.COLORMAP_JET)
 
             # Red color mask
-            lower_red = np.array([45, 10, 105]) # 빨간색 범위의 하한
+            lower_red = np.array([20, 0, 85]) # 빨간색 범위의 하한
             upper_red = np.array([90, 35, 255]) # 빨간색 범위의 상한
             red_mask = cv2.inRange(color_image, lower_red, upper_red)
 
             # Green color mask
-            lower_green = np.array([50, 105, 10]) # 빨간색 범위의 하한
-            upper_green = np.array([120, 200, 75]) # 빨간색 범위의 상한
+            lower_green = np.array([50, 95, 0])
+            upper_green = np.array([120, 200, 75]) 
             green_mask = cv2.inRange(color_image, lower_green, upper_green)
 
             # 모폴로지 연산으로 노이즈 제거
@@ -430,7 +430,7 @@ def stream(ser, use_window):
     
 
 if __name__=="__main__":
-    use_serial = False
+    use_serial = True
     use_window = True
     if use_serial:
         ser = serial_connect()
