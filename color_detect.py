@@ -6,44 +6,274 @@ import matplotlib.pyplot as plt           # 2D plotting library producing public
 import pyrealsense2 as rs                 # Intel RealSense cross-platform open-source API
 import serial
 print("Environment Ready")
+
+
+# Aux.
 deg2rad = np.pi/180.0
+G_mem = 0
+dst_p_mem = 1.0
+R_mem = 0   # has to be zero if the red marker is not initially given
+LMT_ENB = 0
+
 
 
 def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
+    global deg2rad, G_mem, dst_p_mem, R_mem, LMT_ENB
     # ||| ---------- director settings ---------- |||
     # NAV. tune
-    tht_g_CRT1 = deg2rad*75.0
-    tht_g_CRT2 = deg2rad*45.0
-    mod_tht_g_CRT = 0.3 # metre
+    ini_rot = 'L'   # initial rotation direction to find red marker
+    #ini_rot = 'R'
 
-    r_DIR_pass = 1.2
+    # param. when there is no goal
+    tht_g_CRT1 = deg2rad*45.0
+    tht_g_CRT2 = deg2rad*15.0
+    mod_tht_g_CRT = 0.4     # metre
+
+    # general avoidance settings
+    r_DIR_pass = 0.8
+    mod_r_DIR1 = deg2rad*90
+    mod_r_DIR2 = 0.01
+    tht_DIR_pass = deg2rad*85.0
+
+    # limiter settings
+    dst_diff_CRIT = 0.0   # metre
+    LMT_stp = 4
+    LMT_r = 0.15    # metre
+
+    global r_CRT
+    r_CRT = np.array([1.5, 0.5, 0.3])  # metre
+    gamma_std = 2.0     # metre
+    gamma = 0.9     # < 1.0 for safety
+
+
+
+    # VC_set index
+    global idx_st, \
+    \
+        idx_prl_L15, idx_prl_R15, \
+        idx_prl_L30, idx_prl_R30, \
+        idx_prl_L45, idx_prl_R45, \
+        idx_prl_L60, idx_prl_R60, \
+    \
+        idx_arc_L500, idx_arc_R500, \
+        idx_arc_L300, idx_arc_R300, \
+        idx_arc_L1500, idx_arc_R1500, \
+    \
+        idx_rot_L15, idx_rot_R15
+
+    idx_st = 'g'
+
+    ''''''
+    idx_prl_L15 = 'g'
+    idx_prl_R15 = 'g'
+    idx_prl_L30 = 'g'
+    idx_prl_R30 = 'g'
+    idx_prl_L45 = 'y'
+    idx_prl_R45 = 't'
+    idx_prl_L60 = 'i'
+    idx_prl_R60 = 'u'
+    idx_prl_L75 = 'p'
+    idx_prl_R75 = 'o'
+
+    idx_arc_L300 = 'j'
+    idx_arc_R300 = 'd'
+    idx_arc_L500 = 's'
+    idx_arc_R500 = 'h'
+    idx_arc_L1500 = 'g'
+    idx_arc_R1500 = 'g'
+
+    idx_rot_L15 = 'n'
+    idx_rot_R15 = 'm'
+
+
+    # ||| ---------- end of director settings ---------- |||
+
+
+
+    # ----- pre-processing -----
+    r_CRT = gamma_std*np.power( (r_CRT / gamma_std), gamma )
+
+    if ( flg_g == 1 ):
+        tht_g = np.arctan2(off_g, dst_g)
+        if ( tht_g > 0 ):
+            R_mem = 1
+        else:
+            R_mem = -1
+
+        tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+        tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+
+    if ( flg_p == 1 ) and ( R_mem != 0 ):
+        tht_p = np.arctan2(off_p, dst_p)
+        r_DIR_pass = r_DIR_pass*( 1.0 - np.exp( (abs(tht_p) - mod_r_DIR1) / mod_r_DIR2 ) )
+        dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
+
+        dst_diff = dst_p - dst_p_mem
+        if ( dst_diff > dst_diff_CRIT ) or ( G_mem == 0 ):
+            LMT_ENB = LMT_stp
+            if ( R_mem > 0 ):
+                G_mem = 1
+            else:
+                G_mem = -1
+        dst_p_mem = dst_p
+
+        if ( G_mem > 0 ):
+            off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+            flg_pass = 1
+        else:
+            off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
+            flg_pass = -1
+
+        tht_pass = np.arctan2(off_pass, dst_pass)
+        flg_pass = flg_pass*tht_pass
+
+        r_pass = dst_pass / np.sin(2*tht_pass)
+        if ( LMT_ENB > 0 ):
+            if ( abs(r_pass) < LMT_r ):
+               r_pass = np.sign(r_pass)*LMT_r
+            LMT_ENB -= 1
+        print('')
+        print('R_PASS:', r_pass)
+        print('')
+
+    
+
+
+    # ----- decision making -----
+    # goal location has not been identified
+    if ( R_mem == 0 ):
+        if ( ini_rot == 'L' ):
+            return idx_rot_L15
+        else:
+            return idx_rot_R15
+
+    # general obstacle avoidance
+    elif ( flg_p == 1 ):
+        return obs_AVD(r_pass, flg_pass)
+
+    # towards goal without obstacle
+    elif ( (flg_p == 0) ):
+
+        if ( abs(tht_g) < tht_g_CRT2 ):
+            return idx_st
+
+        elif ( abs(tht_g) < tht_g_CRT1 ) or (LMT_ENB > 0):
+            LMT_ENB -= 1
+            if ( tht_g > 0 ):
+                return idx_arc_R300
+            else:
+                return idx_arc_L300
+
+        else:
+            if ( tht_g > 0 ):
+                return idx_rot_R15
+            else:
+                return idx_rot_L15
+
+    else:
+        return -1
+
+
+
+def obs_AVD(r_pass, flg_pass):
+        # criterion for going straight
+        if ( abs(r_pass) > r_CRT[0] ) or ( flg_pass < 0 ):
+               return idx_st
+
+        # criteria for arcs
+        elif ( abs(r_pass) > r_CRT[1] ):
+            if ( r_pass > 0 ):
+                return idx_arc_R1500
+            else:
+                return idx_arc_L1500
+
+        elif ( abs(r_pass) > r_CRT[2] ):
+            if ( r_pass > 0 ):
+                return idx_arc_R500
+            else:
+                return idx_arc_L500
+
+        elif ( abs(r_pass) > r_CRT[3] ):
+            if ( r_pass > 0 ):
+                return idx_arc_R300
+            else:
+                return idx_arc_L300
+
+        # rotation
+        else:
+            if r_pass > 0:
+                return idx_rot_R15
+            else:
+                return idx_rot_L15
+            
+
+
+def DRCTR_1(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
+    # ||| ---------- director settings ---------- |||
+    # NAV. tune
+    tht_g_CRT1 = deg2rad*50.0
+    tht_g_CRT2 = deg2rad*15.0
+    mod_tht_g_CRT = 0.4 # metre
+
+    r_DIR_pass = 0.85
     mod_r_DIR = 0.0000000000001 # metre
-    tht_DIR_pass = deg2rad*155.0
+    tht_DIR_pass = deg2rad*90.0
 
-    tht_p_DECI = deg2rad*5.0
-    tht_g_DECI = deg2rad*2.0
+    tht_p_DECI = deg2rad*0.0
+    tht_g_DECI = deg2rad*0.0
 
-    tht_CRT = np.array([12.0, 15.0, 30.0, 45.0, 60.0])
-    gamma = 1.2
+    tht_CRT = np.array([12.0, 15.0, 45.0+0.0, 45.0+2.5, 60.0-1])
+    gamma = 1.0
 
     # VC_set index
     # ! if new index is added, add it also in the idx_set
     idx_st = 'g'
 
-    idx_prl_L15 = 'o'
-    idx_prl_R15 = 'p'
-    idx_prl_L30 = 'q'
-    idx_prl_R30 = 'c'
-    idx_prl_L45 = 'w'
-    idx_prl_R45 = 'v'
-    idx_prl_L60 = 'n'
-    idx_prl_R60 = 'm'
+    ''''''
+    idx_prl_L15 = 'g'
+    idx_prl_R15 = 'g'
+    idx_prl_L30 = 'g'
+    idx_prl_R30 = 'g'
+    idx_prl_L45 = 'y'
+    idx_prl_R45 = 't'
+    idx_prl_L60 = 'i'
+    idx_prl_R60 = 'u'
+    idx_prl_L75 = 'p'
+    idx_prl_R75 = 'o'
 
-    idx_arc_L300 = 'l'
-    idx_arc_R300 = 'r'
+    idx_arc_L250 = 'h'
+    idx_arc_R250 = 's'
+    idx_arc_L300 = 'j'
+    idx_arc_R300 = 'd'
+    idx_arc_L1500 = 'k'
+    idx_arc_R1500 = 'f'
 
-    idx_rot_L15 = 'k'
-    idx_rot_R15 = 'e'
+    idx_rot_L15 = 'n'
+    idx_rot_R15 = 'm'
+    ''''''
+
+    '''
+    idx_prl_L15 = 'w'
+    idx_prl_R15 = 'q'
+    idx_prl_L30 = 'r'
+    idx_prl_R30 = 'e'
+    idx_prl_L45 = 'y'
+    idx_prl_R45 = 't'
+    idx_prl_L60 = 'i'
+    idx_prl_R60 = 'u'
+    idx_prl_L75 = 'p'
+    idx_prl_R75 = 'o'
+
+    idx_arc_L250 = 'h'
+    idx_arc_R250 = 's'
+    idx_arc_L300 = 'j'
+    idx_arc_R300 = 'd'
+    idx_arc_L1500 = 'k'
+    idx_arc_R1500 = 'f'
+
+    idx_rot_L15 = 'n'
+    idx_rot_R15 = 'm'
+    '''
 
     idx_set = [idx_st, idx_prl_L15, idx_prl_R15, idx_prl_L30, idx_prl_R30, idx_prl_L45, idx_prl_R45, idx_prl_L60, idx_prl_R60, idx_arc_L300, idx_arc_R300, idx_rot_L15, idx_rot_R15]
     # ||| ---------- end of director settings ---------- |||
@@ -134,7 +364,7 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         return idx_arc_R300
 
 
-def obs_AVD(tht_pass, tht_CRT_use, flg_pass, idx_set):
+def obs_AVD_1(tht_pass, tht_CRT_use, flg_pass, idx_set):
         if ( ( abs(tht_pass) < tht_CRT_use[0] ) or (flg_pass < 0) ):
                return idx_set[0]
 
