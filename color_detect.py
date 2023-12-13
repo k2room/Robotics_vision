@@ -30,20 +30,22 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     mod_tht_g_CRT = 0.4     # metre
 
     # general avoidance settings
-    r_DIR_pass = 0.8
+    r_DIR_pass = 1.2
     mod_r_DIR1 = deg2rad*90
-    mod_r_DIR2 = 0.01
+    mod_r_DIR2 = 0.0001
     tht_DIR_pass = deg2rad*85.0
 
     # limiter settings
-    dst_diff_CRIT = 0.0   # metre
-    LMT_stp = 4
-    LMT_r = 0.15    # metre
+    dst_diff_CRIT = 0.3   # metre
+    LMT_stp = 3
+    LMT_r = 0.20    # metre
+    dst_EMR = 0.35   # metre
 
+    # discrete radius decider settings
     global r_CRT
-    r_CRT = np.array([1.5, 0.5, 0.3])  # metre
-    gamma_std = 2.0     # metre
-    gamma = 0.9     # < 1.0 for safety
+    r_CRT = np.array([2.0, 1.5, 0.7, 0.5, 0.35, 0.3, 0.25])  # metre
+    gamma_std = r_CRT[0]     # metre
+    gamma = 0.7     # < 1.0 for safety
 
 
 
@@ -55,32 +57,37 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         idx_prl_L45, idx_prl_R45, \
         idx_prl_L60, idx_prl_R60, \
     \
-        idx_arc_L500, idx_arc_R500, \
+        idx_arc_L250, idx_arc_R250, \
         idx_arc_L300, idx_arc_R300, \
+        idx_arc_L350, idx_arc_R350, \
+        idx_arc_L500, idx_arc_R500, \
+        idx_arc_L700, idx_arc_R700, \
         idx_arc_L1500, idx_arc_R1500, \
+    \
+        idx_arc_L_LMT, idx_arc_R_LMT, \
     \
         idx_rot_L15, idx_rot_R15
 
     idx_st = 'g'
 
-    ''''''
-    idx_prl_L15 = 'g'
-    idx_prl_R15 = 'g'
     idx_prl_L30 = 'g'
     idx_prl_R30 = 'g'
-    idx_prl_L45 = 'y'
-    idx_prl_R45 = 't'
-    idx_prl_L60 = 'i'
-    idx_prl_R60 = 'u'
-    idx_prl_L75 = 'p'
-    idx_prl_R75 = 'o'
 
+    idx_arc_L250 = 'w'
+    idx_arc_R250 = 'q'
     idx_arc_L300 = 'j'
     idx_arc_R300 = 'd'
+    idx_arc_L350 = 'y'
+    idx_arc_R350 = 't'
     idx_arc_L500 = 's'
     idx_arc_R500 = 'h'
-    idx_arc_L1500 = 'g'
-    idx_arc_R1500 = 'g'
+    idx_arc_L700 = 'k'
+    idx_arc_R700 = 'f'
+    idx_arc_L1500 = 'u'
+    idx_arc_R1500 = 'v'
+
+    idx_arc_L_LMT = idx_arc_L250
+    idx_arc_R_LMT = idx_arc_R250
 
     idx_rot_L15 = 'n'
     idx_rot_R15 = 'm'
@@ -127,8 +134,8 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         tht_pass = np.arctan2(off_pass, dst_pass)
         flg_pass = flg_pass*tht_pass
 
-        r_pass = dst_pass / np.sin(2*tht_pass)
-        if ( LMT_ENB > 0 ):
+        r_pass = ( off_pass**2 + dst_pass**2 ) / (2*off_pass)
+        if ( LMT_ENB > 0 ) and ( dst_p > dst_EMR ):
             if ( abs(r_pass) < LMT_r ):
                r_pass = np.sign(r_pass)*LMT_r
             LMT_ENB -= 1
@@ -152,17 +159,19 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         return obs_AVD(r_pass, flg_pass)
 
     # towards goal without obstacle
-    elif ( (flg_p == 0) ):
+    elif ( flg_g == 1 )and ( flg_p == 0 ) :
 
         if ( abs(tht_g) < tht_g_CRT2 ):
             return idx_st
 
-        elif ( abs(tht_g) < tht_g_CRT1 ) or (LMT_ENB > 0):
-            LMT_ENB -= 1
+        elif ( abs(tht_g) < tht_g_CRT1 ) or ( LMT_ENB > 0 ):
+            if (LMT_ENB > 0):
+                LMT_ENB -= 1
+
             if ( tht_g > 0 ):
-                return idx_arc_R300
+                return idx_arc_R_LMT
             else:
-                return idx_arc_L300
+                return idx_arc_L_LMT
 
         else:
             if ( tht_g > 0 ):
@@ -171,9 +180,27 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
                 return idx_rot_L15
 
     else:
-        return -1
-
-
+        if ( R_mem != 0 ):
+            if (LMT_ENB > 0):
+                LMT_ENB -= 1
+                if ( R_mem > 0 ):
+                    return idx_arc_R_LMT
+                else:
+                    return idx_arc_L_LMT
+                
+            else:
+                if ( R_mem > 0 ):
+                    return idx_rot_R15
+                else:
+                    return idx_rot_L15
+        
+        else:
+            if ( ini_rot == 'L' ):
+                return idx_rot_L15
+            else:
+                return idx_rot_R15
+            
+            
 
 def obs_AVD(r_pass, flg_pass):
         # criterion for going straight
@@ -189,16 +216,34 @@ def obs_AVD(r_pass, flg_pass):
 
         elif ( abs(r_pass) > r_CRT[2] ):
             if ( r_pass > 0 ):
+                return idx_arc_R700
+            else:
+                return idx_arc_L700
+
+        elif ( abs(r_pass) > r_CRT[3] ):
+            if ( r_pass > 0 ):
                 return idx_arc_R500
             else:
                 return idx_arc_L500
+            
+        elif ( abs(r_pass) > r_CRT[4] ):
+            if ( r_pass > 0 ):
+                return idx_arc_R350
+            else:
+                return idx_arc_L350
 
-        elif ( abs(r_pass) > r_CRT[3] ):
+        elif ( abs(r_pass) > r_CRT[5] ):
             if ( r_pass > 0 ):
                 return idx_arc_R300
             else:
                 return idx_arc_L300
-
+            
+        elif ( abs(r_pass) > r_CRT[6] ):
+            if ( r_pass > 0 ):
+                return idx_arc_R250
+            else:
+                return idx_arc_L250
+            
         # rotation
         else:
             if r_pass > 0:
@@ -661,6 +706,7 @@ def stream(ser, use_window):
 
 if __name__=="__main__":
     use_serial = True
+    #use_serial = False
     use_window = True
     if use_serial:
         ser = serial_connect()
