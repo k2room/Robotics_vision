@@ -12,32 +12,40 @@ print("Environment Ready")
 
 # Aux.
 deg2rad = np.pi/180.0
-G_mem = 0
+G_mem = 1      # initial pass point preference
+tot_frcd_rot = 1    # total forced rotation limit
 dst_p_RST = 10.0
 dst_p_mem = dst_p_RST
 off_p_RST = 0.0
 off_p_mem = off_p_RST
 R_mem = 0   # has to be zero if the red marker is not initially given
-LMT_ENB = 0
+
+chkr1 = 1
+dst_p_mem_FRST = 0.0
+
+flg_frcd = 0
+flg_LMT = 0
+
+T_frcd_rot = 0.0
+T_frcd_end = 0.0
+T_LMT = 0.0
 
 
 
 def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
-    global deg2rad, G_mem, dst_p_RST, dst_p_mem, off_p_mem, R_mem, LMT_ENB
+    global deg2rad, G_mem, dst_p_RST, dst_p_mem, off_p_mem, R_mem, tot_frcd_rot, chkr1, dst_p_mem_FRST, flg_frcd, flg_LMT, T_frcd_rot, T_frcd_end, T_LMT
     # ||| ---------- director settings ---------- |||
 
     # -------------------- pre-declarations --------------------
     # discrete radius decider param.
     global r_CRT
-    r_CRT = 1.4 * np.array([2.0, 1.5, 0.7, 0.6, 0.5, 0.35, 0.3, 0.25])  # metre
+    r_CRT = 0.7 * np.array([2.0, 1.5, 0.7, 0.6, 0.5, 0.35, 0.3, 0.25])  # metre
 
     # VC_set index
     global idx_st, \
     \
-        idx_prl_L15, idx_prl_R15, \
         idx_prl_L30, idx_prl_R30, \
-        idx_prl_L45, idx_prl_R45, \
-        idx_prl_L60, idx_prl_R60, \
+        idx_prl_L90, idx_prl_R90, \
     \
         idx_arc_L250, idx_arc_R250, \
         idx_arc_L300, idx_arc_R300, \
@@ -49,6 +57,7 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     \
         idx_arc_L_LMT, idx_arc_R_LMT, \
     \
+        idx_rot_L5, idx_rot_R5, \
         idx_rot_L15, idx_rot_R15
 
     # ----- forward -----
@@ -57,6 +66,9 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     # ----- oblique line -----
     idx_prl_L30 = 'g'
     idx_prl_R30 = 'g'
+
+    idx_prl_L90 = 'z'
+    idx_prl_R90 = 'x'
 
     # ----- arc -----
     idx_arc_L250 = 'w'
@@ -81,39 +93,48 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     idx_arc_R1500 = 'v'
 
     # ----- rotation -----
+    idx_rot_L5 = 'N'
+    idx_rot_R5 = 'M'
     idx_rot_L15 = 'n'
     idx_rot_R15 = 'm'
 
     # -------------------- end of pre-declarations --------------------
 
     # initial rotation direction to find goal
+    # modify G_mem outside of the function to get desired initial pass point
     ini_rot = 'L'
     # ini_rot = 'R'
+    # criterion for parallel start
+    dst_PRL = 0.65   # metre
 
     # goal guidance param.
-    tht_g_CRT1 = deg2rad * 45.0
-    tht_g_CRT2 = deg2rad * 15.0
-    mod_tht_g_CRT = 0.40  # metre
+    tht_g_CRT1 = deg2rad * 30.0
+    tht_g_CRT2 = deg2rad * 10.0
+    mod_tht_g_CRT = 0.20  # metre
+    tht_g_GUD = deg2rad * 25.0     # > 0 for wider guidance
 
     # general avoidance param.
     # - pass point locater
-    r_DIR_pass = 0.85
-    tht_DIR_pass = deg2rad*65.0
+    r_DIR_pass = 0.88
+    tht_DIR_pass = deg2rad*60.0
     # - pass point refinement
     mod_r_DIR1 = deg2rad*180     # half point
     mod_r_DIR2 = 100.0   # > 1 for rapid transition
     # - forced rotation criterion
+    T_frcd_rot_DUR = 3     # sec
     tht_frcd_rot_CRT = deg2rad*40   # < 45 deg
     r_frcd_rot_DRP = 10**(-3)   # safe radius that discrete radius decider will trigger rotation
     # - limiter
-    dst_diff_CRIT = 0.3   # > 0, metre
-    off_diff_CRIT = 0.8   # > 0, metre
-    LMT_stp = 300
+    dst_diff_CRIT = 0.35   # > 0, metre
+    off_diff_CRIT = 0.55   # > 0, metre
+    T_LMT_ENB_DUR = 14   # sec
     dst_EMR = 0.5   # metre
+    frcd_rot_in_NAV = 0
     # -- limiter arc radius
-    LMT_r = r_CRT[3]  # metre
-    idx_arc_L_LMT = idx_arc_L600
-    idx_arc_R_LMT = idx_arc_R600
+    global LMT_r
+    LMT_r = r_CRT[2]  # metre
+    idx_arc_L_LMT = idx_arc_L700
+    idx_arc_R_LMT = idx_arc_R700
 
     # ||| ---------- end of director settings ---------- |||
 
@@ -123,6 +144,7 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     # when goal is detected
     if flg_g == 1:
         tht_g = np.arctan2(off_g, dst_g)
+
         if tht_g > 0:
             R_mem = 1
         else:
@@ -131,8 +153,25 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
         tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
 
+        if flg_p == 0:
+            if off_g > 0:
+                tht_g = tht_g - tht_g_GUD
+            else:
+                tht_g = tht_g + tht_g_GUD
+
+
+
     # when obstacle is detected and goal has been detected
     if ( flg_p == 1 ) and ( R_mem != 0 ):
+        if chkr1 > 0:
+            dst_p_mem_FRST = dst_p
+            chkr1 -= 1
+            if ( dst_p_mem_FRST > dst_PRL ):
+                if tot_frcd_rot > 0:
+                    tot_frcd_rot -= 1
+
+        
+
         tht_p = np.arctan2(off_p, dst_p)
         r_DIR_pass = r_DIR_pass*( (1/np.pi)*np.arctan( (-mod_r_DIR2)*( abs(tht_p) - mod_r_DIR1 ) ) + 0.5 )
         dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
@@ -141,7 +180,8 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         dst_diff = dst_p - dst_p_mem
         off_diff = abs(off_p - off_p_mem)
         if ( dst_diff > dst_diff_CRIT ) or ( off_diff > off_diff_CRIT ) or ( G_mem == 0 ):
-            LMT_ENB = LMT_stp
+            flg_LMT = 1
+            T_LMT = time.time()
             if R_mem > 0:
             #if ( ( R_mem > 0 ) and (tht_p < 0) ) or ( ( R_mem < 0 ) and (tht_p < 0) ):
                 G_mem = 1
@@ -157,38 +197,102 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         else:
             off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
             flg_pass = -1
-
+        
         tht_pass = np.arctan2(off_pass, dst_pass)
         flg_pass = flg_pass*tht_pass
-
+        
         # required radius calculation
         if abs(tht_pass) < tht_frcd_rot_CRT:
             r_pass = ( off_pass**2 + dst_pass**2 ) / (2*off_pass)
         else:
             if tht_pass > 0:
                 r_pass = r_frcd_rot_DRP
+                if frcd_rot_in_NAV == 1:
+                    T_frcd_rot = time.time()
+                    flg_frcd = 1
             else:
                 r_pass = -r_frcd_rot_DRP
+                if frcd_rot_in_NAV == 1:
+                    T_frcd_rot = time.time()
+                    flg_frcd = -1
+
+
+        if ( dst_p <= dst_PRL ) and ( tot_frcd_rot > 0 ):  # parallel start condition
+            T_frcd_rot = time.time()
+            if G_mem > 0:
+                if ( ( tot_frcd_rot > 0 ) and ( R_mem > 0 ) ) and ( flg_frcd == 0 ):
+                    flg_frcd = 1
+                    
+            else:
+                if ( ( tot_frcd_rot > 0 ) and ( R_mem < 0 ) ) and ( flg_frcd == 0 ):
+                    flg_frcd = -1
 
         # arc radius limiter
-        if ( LMT_ENB > 0 ) and ( dst_p > dst_EMR ):
+        if ( flg_LMT > 0 ) and ( dst_p > dst_EMR ):
             if abs(r_pass) < LMT_r:
                r_pass = np.sign(r_pass)*LMT_r
-            LMT_ENB -= 1
 
         elif dst_p <= dst_EMR:  # limiter overriding condition
             if G_mem > 0:
                 r_pass = r_frcd_rot_DRP
+                print("tot_frcd_rot:",tot_frcd_rot, " dst_p_mem_FRST:",dst_p_mem_FRST, "dst_EMR:", dst_EMR)
+                if ( ( tot_frcd_rot > 0 ) and ( R_mem > 0 ) ) and ( flg_frcd == 0 ):
+                    flg_frcd = 1
+                    print("ok1")
+                    
             else:
                 r_pass = -r_frcd_rot_DRP
+                print("tot_frcd_rot:",tot_frcd_rot, " dst_p_mem_FRST:",dst_p_mem_FRST, "dst_EMR:", dst_EMR)
+                if ( ( tot_frcd_rot > 0 ) and ( R_mem < 0 ) ) and ( flg_frcd == 0 ):
+                    flg_frcd = -1
+                    print("ok2")
 
         print('')
         print('R_PASS:', r_pass)
         print('')
 
     if ( dst_p_mem < dst_p_RST ) and ( flg_p == 0 ) and ( R_mem != 0 ):
-        LMT_ENB = LMT_stp
+        flg_LMT = 1
+        T_LMT = time.time()
         dst_p_mem = dst_p_RST
+
+
+
+    T_prsnt = time.time()
+    if abs(flg_frcd) > 0:
+        T_diff_frcd_rot = T_prsnt - T_frcd_rot
+
+        print('')
+        print('T_diff_frcd_rot: ', T_diff_frcd_rot)
+        print('')
+
+        if T_diff_frcd_rot > T_frcd_rot_DUR:
+            flg_frcd = 0
+            T_frcd_end = T_prsnt
+            if tot_frcd_rot > 0:
+                tot_frcd_rot -= 1
+
+    elif flg_LMT > 0:
+        if T_frcd_end > 0:
+            T_diff_LMT_ENB = T_prsnt - T_frcd_end
+        else:
+            T_diff_LMT_ENB = T_prsnt - T_LMT
+
+        print('')
+        print('T_diff_LMT_ENB: ', T_diff_LMT_ENB)
+        print('')
+
+        if T_diff_LMT_ENB > T_LMT_ENB_DUR:
+            flg_LMT = 0
+            T_frcd_end = 0
+
+    
+
+    print('')
+    print('flg_LMT: ', flg_LMT)
+    print('flg_frcd: ', flg_frcd)
+    print('TOT: ', tot_frcd_rot)
+    print('')
 
 
 
@@ -199,6 +303,13 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
             return idx_rot_L15
         else:
             return idx_rot_R15
+    
+    # forced rotation execution
+    elif abs(flg_frcd) > 0:
+        if flg_frcd > 0:
+            return idx_prl_R90
+        else:
+            return idx_prl_L90
 
     # general obstacle avoidance
     elif flg_p == 1:
@@ -210,10 +321,7 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
         if abs(tht_g) < tht_g_CRT2:
             return idx_st
 
-        elif ( abs(tht_g) < tht_g_CRT1 ) or ( LMT_ENB > 0 ):
-            if LMT_ENB > 0:
-                LMT_ENB -= 1
-
+        elif ( abs(tht_g) < tht_g_CRT1 ) or ( flg_LMT > 0 ):
             if tht_g > 0:
                 return idx_arc_R_LMT
             else:
@@ -227,11 +335,7 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
 
     # no goal or obstacle in sight
     else:
-        print('')
-        print('LMT_ENB: ', LMT_ENB)
-        print('')
-        if LMT_ENB > 0:
-            LMT_ENB -= 1
+        if flg_LMT > 0:
             if R_mem > 0:
                 return idx_arc_R_LMT
             else:
@@ -246,9 +350,10 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
 
 
 def arcDECI(r_pass, flg_pass):
+    global G_mem
     # criterion for going straight
     if ( abs(r_pass) >= r_CRT[0] ) or ( flg_pass < 0 ):
-           return idx_st
+        return idx_st
 
     # criteria for arcs
     elif abs(r_pass) >= r_CRT[1]:
@@ -296,434 +401,434 @@ def arcDECI(r_pass, flg_pass):
     # rotation
     else:
         if r_pass > 0:
-            return idx_rot_R15
+            return idx_rot_R5
         else:
-            return idx_rot_L15
+            return idx_rot_L5
 
 
 
 
 
-def DRCTR_old2(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
-    global deg2rad, G_mem, dst_p_mem, R_mem, LMT_ENB
-    # ||| ---------- director settings ---------- |||
-    # NAV. tune
-    ini_rot = 'L'   # initial rotation direction to find red marker
-    #ini_rot = 'R'
+# def DRCTR_old2(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
+#     global deg2rad, G_mem, dst_p_mem, R_mem, LMT_ENB
+#     # ||| ---------- director settings ---------- |||
+#     # NAV. tune
+#     ini_rot = 'L'   # initial rotation direction to find red marker
+#     #ini_rot = 'R'
 
-    # param. when there is no goal
-    tht_g_CRT1 = deg2rad*45.0
-    tht_g_CRT2 = deg2rad*15.0
-    mod_tht_g_CRT = 0.4     # metre
+#     # param. when there is no goal
+#     tht_g_CRT1 = deg2rad*45.0
+#     tht_g_CRT2 = deg2rad*15.0
+#     mod_tht_g_CRT = 0.4     # metre
 
-    # general avoidance settings
-    r_DIR_pass = 1.2
-    mod_r_DIR1 = deg2rad*90
-    mod_r_DIR2 = 0.0001
-    tht_DIR_pass = deg2rad*85.0
+#     # general avoidance settings
+#     r_DIR_pass = 1.2
+#     mod_r_DIR1 = deg2rad*90
+#     mod_r_DIR2 = 0.0001
+#     tht_DIR_pass = deg2rad*85.0
 
-    # limiter settings
-    dst_diff_CRIT = 0.3   # metre
-    LMT_stp = 3
-    LMT_r = 0.20    # metre
-    dst_EMR = 0.35   # metre
+#     # limiter settings
+#     dst_diff_CRIT = 0.3   # metre
+#     LMT_stp = 3
+#     LMT_r = 0.20    # metre
+#     dst_EMR = 0.35   # metre
 
-    # discrete radius decider settings
-    global r_CRT
-    r_CRT = np.array([2.0, 1.5, 0.7, 0.5, 0.35, 0.3, 0.25])  # metre
-    gamma_std = r_CRT[0]     # metre
-    gamma = 0.7     # < 1.0 for safety
-
-
-
-    # VC_set index
-    global idx_st, \
-    \
-        idx_prl_L15, idx_prl_R15, \
-        idx_prl_L30, idx_prl_R30, \
-        idx_prl_L45, idx_prl_R45, \
-        idx_prl_L60, idx_prl_R60, \
-    \
-        idx_arc_L250, idx_arc_R250, \
-        idx_arc_L300, idx_arc_R300, \
-        idx_arc_L350, idx_arc_R350, \
-        idx_arc_L500, idx_arc_R500, \
-        idx_arc_L700, idx_arc_R700, \
-        idx_arc_L1500, idx_arc_R1500, \
-    \
-        idx_arc_L_LMT, idx_arc_R_LMT, \
-    \
-        idx_rot_L15, idx_rot_R15
-
-    idx_st = 'g'
-
-    idx_prl_L30 = 'g'
-    idx_prl_R30 = 'g'
-
-    idx_arc_L250 = 'w'
-    idx_arc_R250 = 'q'
-    idx_arc_L300 = 'j'
-    idx_arc_R300 = 'd'
-    idx_arc_L350 = 'y'
-    idx_arc_R350 = 't'
-    idx_arc_L500 = 's'
-    idx_arc_R500 = 'h'
-    idx_arc_L700 = 'k'
-    idx_arc_R700 = 'f'
-    idx_arc_L1500 = 'u'
-    idx_arc_R1500 = 'v'
-
-    idx_arc_L_LMT = idx_arc_L250
-    idx_arc_R_LMT = idx_arc_R250
-
-    idx_rot_L15 = 'n'
-    idx_rot_R15 = 'm'
-
-
-    # ||| ---------- end of director settings ---------- |||
+#     # discrete radius decider settings
+#     global r_CRT
+#     r_CRT = np.array([2.0, 1.5, 0.7, 0.5, 0.35, 0.3, 0.25])  # metre
+#     gamma_std = r_CRT[0]     # metre
+#     gamma = 0.7     # < 1.0 for safety
 
 
 
-    # ----- pre-processing -----
-    r_CRT = gamma_std*np.power( (r_CRT / gamma_std), gamma )
+#     # VC_set index
+#     global idx_st, \
+#     \
+#         idx_prl_L15, idx_prl_R15, \
+#         idx_prl_L30, idx_prl_R30, \
+#         idx_prl_L45, idx_prl_R45, \
+#         idx_prl_L60, idx_prl_R60, \
+#     \
+#         idx_arc_L250, idx_arc_R250, \
+#         idx_arc_L300, idx_arc_R300, \
+#         idx_arc_L350, idx_arc_R350, \
+#         idx_arc_L500, idx_arc_R500, \
+#         idx_arc_L700, idx_arc_R700, \
+#         idx_arc_L1500, idx_arc_R1500, \
+#     \
+#         idx_arc_L_LMT, idx_arc_R_LMT, \
+#     \
+#         idx_rot_L15, idx_rot_R15
 
-    if ( flg_g == 1 ):
-        tht_g = np.arctan2(off_g, dst_g)
-        if ( tht_g > 0 ):
-            R_mem = 1
-        else:
-            R_mem = -1
+#     idx_st = 'g'
 
-        tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
-        tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+#     idx_prl_L30 = 'g'
+#     idx_prl_R30 = 'g'
 
-    if ( flg_p == 1 ) and ( R_mem != 0 ):
-        tht_p = np.arctan2(off_p, dst_p)
-        r_DIR_pass = r_DIR_pass*( 1.0 - np.exp( (abs(tht_p) - mod_r_DIR1) / mod_r_DIR2 ) )
-        dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
+#     idx_arc_L250 = 'w'
+#     idx_arc_R250 = 'q'
+#     idx_arc_L300 = 'j'
+#     idx_arc_R300 = 'd'
+#     idx_arc_L350 = 'y'
+#     idx_arc_R350 = 't'
+#     idx_arc_L500 = 's'
+#     idx_arc_R500 = 'h'
+#     idx_arc_L700 = 'k'
+#     idx_arc_R700 = 'f'
+#     idx_arc_L1500 = 'u'
+#     idx_arc_R1500 = 'v'
 
-        dst_diff = dst_p - dst_p_mem
-        if ( dst_diff > dst_diff_CRIT ) or ( G_mem == 0 ):
-            LMT_ENB = LMT_stp
-            if ( R_mem > 0 ):
-                G_mem = 1
-            else:
-                G_mem = -1
-        dst_p_mem = dst_p
+#     idx_arc_L_LMT = idx_arc_L250
+#     idx_arc_R_LMT = idx_arc_R250
 
-        if ( G_mem > 0 ):
-            off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
-            flg_pass = 1
-        else:
-            off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
-            flg_pass = -1
+#     idx_rot_L15 = 'n'
+#     idx_rot_R15 = 'm'
 
-        tht_pass = np.arctan2(off_pass, dst_pass)
-        flg_pass = flg_pass*tht_pass
 
-        r_pass = ( off_pass**2 + dst_pass**2 ) / (2*off_pass)
-        if ( LMT_ENB > 0 ) and ( dst_p > dst_EMR ):
-            if ( abs(r_pass) < LMT_r ):
-               r_pass = np.sign(r_pass)*LMT_r
-            LMT_ENB -= 1
-        print('')
-        print('R_PASS:', r_pass)
-        print('')
+#     # ||| ---------- end of director settings ---------- |||
+
+
+
+#     # ----- pre-processing -----
+#     r_CRT = gamma_std*np.power( (r_CRT / gamma_std), gamma )
+
+#     if ( flg_g == 1 ):
+#         tht_g = np.arctan2(off_g, dst_g)
+#         if ( tht_g > 0 ):
+#             R_mem = 1
+#         else:
+#             R_mem = -1
+
+#         tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+#         tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+
+#     if ( flg_p == 1 ) and ( R_mem != 0 ):
+#         tht_p = np.arctan2(off_p, dst_p)
+#         r_DIR_pass = r_DIR_pass*( 1.0 - np.exp( (abs(tht_p) - mod_r_DIR1) / mod_r_DIR2 ) )
+#         dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
+
+#         dst_diff = dst_p - dst_p_mem
+#         if ( dst_diff > dst_diff_CRIT ) or ( G_mem == 0 ):
+#             LMT_ENB = LMT_stp
+#             if ( R_mem > 0 ):
+#                 G_mem = 1
+#             else:
+#                 G_mem = -1
+#         dst_p_mem = dst_p
+
+#         if ( G_mem > 0 ):
+#             off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+#             flg_pass = 1
+#         else:
+#             off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
+#             flg_pass = -1
+
+#         tht_pass = np.arctan2(off_pass, dst_pass)
+#         flg_pass = flg_pass*tht_pass
+
+#         r_pass = ( off_pass**2 + dst_pass**2 ) / (2*off_pass)
+#         if ( LMT_ENB > 0 ) and ( dst_p > dst_EMR ):
+#             if ( abs(r_pass) < LMT_r ):
+#                r_pass = np.sign(r_pass)*LMT_r
+#             LMT_ENB -= 1
+#         print('')
+#         print('R_PASS:', r_pass)
+#         print('')
 
     
 
 
-    # ----- decision making -----
-    # goal location has not been identified
-    if ( R_mem == 0 ):
-        if ( ini_rot == 'L' ):
-            return idx_rot_L15
-        else:
-            return idx_rot_R15
+#     # ----- decision making -----
+#     # goal location has not been identified
+#     if ( R_mem == 0 ):
+#         if ( ini_rot == 'L' ):
+#             return idx_rot_L15
+#         else:
+#             return idx_rot_R15
 
-    # general obstacle avoidance
-    elif ( flg_p == 1 ):
-        return obs_AVD(r_pass, flg_pass)
+#     # general obstacle avoidance
+#     elif ( flg_p == 1 ):
+#         return obs_AVD(r_pass, flg_pass)
 
-    # towards goal without obstacle
-    elif ( flg_g == 1 )and ( flg_p == 0 ) :
+#     # towards goal without obstacle
+#     elif ( flg_g == 1 )and ( flg_p == 0 ) :
 
-        if ( abs(tht_g) < tht_g_CRT2 ):
-            return idx_st
+#         if ( abs(tht_g) < tht_g_CRT2 ):
+#             return idx_st
 
-        elif ( abs(tht_g) < tht_g_CRT1 ) or ( LMT_ENB > 0 ):
-            if (LMT_ENB > 0):
-                LMT_ENB -= 1
+#         elif ( abs(tht_g) < tht_g_CRT1 ) or ( LMT_ENB > 0 ):
+#             if (LMT_ENB > 0):
+#                 LMT_ENB -= 1
 
-            if ( tht_g > 0 ):
-                return idx_arc_R_LMT
-            else:
-                return idx_arc_L_LMT
+#             if ( tht_g > 0 ):
+#                 return idx_arc_R_LMT
+#             else:
+#                 return idx_arc_L_LMT
 
-        else:
-            if ( tht_g > 0 ):
-                return idx_rot_R15
-            else:
-                return idx_rot_L15
+#         else:
+#             if ( tht_g > 0 ):
+#                 return idx_rot_R15
+#             else:
+#                 return idx_rot_L15
 
-    else:
-        if ( R_mem != 0 ):
-            if (LMT_ENB > 0):
-                LMT_ENB -= 1
-                if ( R_mem > 0 ):
-                    return idx_arc_R_LMT
-                else:
-                    return idx_arc_L_LMT
+#     else:
+#         if ( R_mem != 0 ):
+#             if (LMT_ENB > 0):
+#                 LMT_ENB -= 1
+#                 if ( R_mem > 0 ):
+#                     return idx_arc_R_LMT
+#                 else:
+#                     return idx_arc_L_LMT
                 
-            else:
-                if ( R_mem > 0 ):
-                    return idx_rot_R15
-                else:
-                    return idx_rot_L15
+#             else:
+#                 if ( R_mem > 0 ):
+#                     return idx_rot_R15
+#                 else:
+#                     return idx_rot_L15
         
-        else:
-            if ( ini_rot == 'L' ):
-                return idx_rot_L15
-            else:
-                return idx_rot_R15
+#         else:
+#             if ( ini_rot == 'L' ):
+#                 return idx_rot_L15
+#             else:
+#                 return idx_rot_R15
             
-def obs_AVD_old2(r_pass, flg_pass):
-        # criterion for going straight
-        if ( abs(r_pass) > r_CRT[0] ) or ( flg_pass < 0 ):
-               return idx_st
+# def obs_AVD_old2(r_pass, flg_pass):
+#         # criterion for going straight
+#         if ( abs(r_pass) > r_CRT[0] ) or ( flg_pass < 0 ):
+#                return idx_st
 
-        # criteria for arcs
-        elif ( abs(r_pass) > r_CRT[1] ):
-            if ( r_pass > 0 ):
-                return idx_arc_R1500
-            else:
-                return idx_arc_L1500
+#         # criteria for arcs
+#         elif ( abs(r_pass) > r_CRT[1] ):
+#             if ( r_pass > 0 ):
+#                 return idx_arc_R1500
+#             else:
+#                 return idx_arc_L1500
 
-        elif ( abs(r_pass) > r_CRT[2] ):
-            if ( r_pass > 0 ):
-                return idx_arc_R700
-            else:
-                return idx_arc_L700
+#         elif ( abs(r_pass) > r_CRT[2] ):
+#             if ( r_pass > 0 ):
+#                 return idx_arc_R700
+#             else:
+#                 return idx_arc_L700
 
-        elif ( abs(r_pass) > r_CRT[3] ):
-            if ( r_pass > 0 ):
-                return idx_arc_R500
-            else:
-                return idx_arc_L500
+#         elif ( abs(r_pass) > r_CRT[3] ):
+#             if ( r_pass > 0 ):
+#                 return idx_arc_R500
+#             else:
+#                 return idx_arc_L500
             
-        elif ( abs(r_pass) > r_CRT[4] ):
-            if ( r_pass > 0 ):
-                return idx_arc_R350
-            else:
-                return idx_arc_L350
+#         elif ( abs(r_pass) > r_CRT[4] ):
+#             if ( r_pass > 0 ):
+#                 return idx_arc_R350
+#             else:
+#                 return idx_arc_L350
 
-        elif ( abs(r_pass) > r_CRT[5] ):
-            if ( r_pass > 0 ):
-                return idx_arc_R300
-            else:
-                return idx_arc_L300
+#         elif ( abs(r_pass) > r_CRT[5] ):
+#             if ( r_pass > 0 ):
+#                 return idx_arc_R300
+#             else:
+#                 return idx_arc_L300
             
-        elif ( abs(r_pass) > r_CRT[6] ):
-            if ( r_pass > 0 ):
-                return idx_arc_R250
-            else:
-                return idx_arc_L250
+#         elif ( abs(r_pass) > r_CRT[6] ):
+#             if ( r_pass > 0 ):
+#                 return idx_arc_R250
+#             else:
+#                 return idx_arc_L250
             
-        # rotation
-        else:
-            if r_pass > 0:
-                return idx_rot_R15
-            else:
-                return idx_rot_L15
+#         # rotation
+#         else:
+#             if r_pass > 0:
+#                 return idx_rot_R15
+#             else:
+#                 return idx_rot_L15
             
-def DRCTR_old1(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
-    # ||| ---------- director settings ---------- |||
-    # NAV. tune
-    tht_g_CRT1 = deg2rad*50.0
-    tht_g_CRT2 = deg2rad*15.0
-    mod_tht_g_CRT = 0.4 # metre
+# def DRCTR_old1(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
+#     # ||| ---------- director settings ---------- |||
+#     # NAV. tune
+#     tht_g_CRT1 = deg2rad*50.0
+#     tht_g_CRT2 = deg2rad*15.0
+#     mod_tht_g_CRT = 0.4 # metre
 
-    r_DIR_pass = 0.85
-    mod_r_DIR = 0.0000000000001 # metre
-    tht_DIR_pass = deg2rad*90.0
+#     r_DIR_pass = 0.85
+#     mod_r_DIR = 0.0000000000001 # metre
+#     tht_DIR_pass = deg2rad*90.0
 
-    tht_p_DECI = deg2rad*0.0
-    tht_g_DECI = deg2rad*0.0
+#     tht_p_DECI = deg2rad*0.0
+#     tht_g_DECI = deg2rad*0.0
 
-    tht_CRT = np.array([12.0, 15.0, 45.0+0.0, 45.0+2.5, 60.0-1])
-    gamma = 1.0
+#     tht_CRT = np.array([12.0, 15.0, 45.0+0.0, 45.0+2.5, 60.0-1])
+#     gamma = 1.0
 
-    # VC_set index
-    # ! if new index is added, add it also in the idx_set
-    idx_st = 'g'
+#     # VC_set index
+#     # ! if new index is added, add it also in the idx_set
+#     idx_st = 'g'
 
-    ''''''
-    idx_prl_L15 = 'g'
-    idx_prl_R15 = 'g'
-    idx_prl_L30 = 'g'
-    idx_prl_R30 = 'g'
-    idx_prl_L45 = 'y'
-    idx_prl_R45 = 't'
-    idx_prl_L60 = 'i'
-    idx_prl_R60 = 'u'
-    idx_prl_L75 = 'p'
-    idx_prl_R75 = 'o'
+#     ''''''
+#     idx_prl_L15 = 'g'
+#     idx_prl_R15 = 'g'
+#     idx_prl_L30 = 'g'
+#     idx_prl_R30 = 'g'
+#     idx_prl_L45 = 'y'
+#     idx_prl_R45 = 't'
+#     idx_prl_L60 = 'i'
+#     idx_prl_R60 = 'u'
+#     idx_prl_L75 = 'p'
+#     idx_prl_R75 = 'o'
 
-    idx_arc_L250 = 'h'
-    idx_arc_R250 = 's'
-    idx_arc_L300 = 'j'
-    idx_arc_R300 = 'd'
-    idx_arc_L1500 = 'k'
-    idx_arc_R1500 = 'f'
+#     idx_arc_L250 = 'h'
+#     idx_arc_R250 = 's'
+#     idx_arc_L300 = 'j'
+#     idx_arc_R300 = 'd'
+#     idx_arc_L1500 = 'k'
+#     idx_arc_R1500 = 'f'
 
-    idx_rot_L15 = 'n'
-    idx_rot_R15 = 'm'
-    ''''''
+#     idx_rot_L15 = 'n'
+#     idx_rot_R15 = 'm'
+#     ''''''
 
-    '''
-    idx_prl_L15 = 'w'
-    idx_prl_R15 = 'q'
-    idx_prl_L30 = 'r'
-    idx_prl_R30 = 'e'
-    idx_prl_L45 = 'y'
-    idx_prl_R45 = 't'
-    idx_prl_L60 = 'i'
-    idx_prl_R60 = 'u'
-    idx_prl_L75 = 'p'
-    idx_prl_R75 = 'o'
+#     '''
+#     idx_prl_L15 = 'w'
+#     idx_prl_R15 = 'q'
+#     idx_prl_L30 = 'r'
+#     idx_prl_R30 = 'e'
+#     idx_prl_L45 = 'y'
+#     idx_prl_R45 = 't'
+#     idx_prl_L60 = 'i'
+#     idx_prl_R60 = 'u'
+#     idx_prl_L75 = 'p'
+#     idx_prl_R75 = 'o'
 
-    idx_arc_L250 = 'h'
-    idx_arc_R250 = 's'
-    idx_arc_L300 = 'j'
-    idx_arc_R300 = 'd'
-    idx_arc_L1500 = 'k'
-    idx_arc_R1500 = 'f'
+#     idx_arc_L250 = 'h'
+#     idx_arc_R250 = 's'
+#     idx_arc_L300 = 'j'
+#     idx_arc_R300 = 'd'
+#     idx_arc_L1500 = 'k'
+#     idx_arc_R1500 = 'f'
 
-    idx_rot_L15 = 'n'
-    idx_rot_R15 = 'm'
-    '''
+#     idx_rot_L15 = 'n'
+#     idx_rot_R15 = 'm'
+#     '''
 
-    idx_set = [idx_st, idx_prl_L15, idx_prl_R15, idx_prl_L30, idx_prl_R30, idx_prl_L45, idx_prl_R45, idx_prl_L60, idx_prl_R60, idx_arc_L300, idx_arc_R300, idx_rot_L15, idx_rot_R15]
-    # ||| ---------- end of director settings ---------- |||
-
-
-
-    # ----- pre-processing -----
-    tht_CRT_use = deg2rad*( 90.0*np.power( (tht_CRT/90.0), gamma ) )
-
-    if ( flg_g == 1 ):
-        tht_g = np.arctan2(off_g, dst_g)
-        tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
-        tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
-
-    if ( flg_p == 1 ):
-        tht_p = np.arctan2(off_p, dst_p)
-        r_DIR_pass = r_DIR_pass*( 1.0 - np.exp( (-1.0/mod_r_DIR)*dst_p ) )
-        dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
-        if ( abs(tht_p) < tht_p_DECI ): # if the obstacle is almost aligned with heading(not decisive)
-            if ( flg_g == 1 ):
-                if ( abs(tht_g) > tht_g_DECI ): # if the goal position is decisive enough,
-                    if ( tht_g < 0 ):
-                        off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
-                        flg_pass = -1
-                    else:
-                        off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
-                        flg_pass = 1
-                else:
-                    off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
-                    flg_pass = 1
-            else:
-                off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
-                flg_pass = 1
-
-        else:
-            if ( tht_p > 0 ):
-                off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
-                flg_pass = -1
-            else:
-                off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
-                flg_pass = 1
-
-        tht_pass = np.arctan2(off_pass, dst_pass)
-        flg_pass = flg_pass*tht_pass
+#     idx_set = [idx_st, idx_prl_L15, idx_prl_R15, idx_prl_L30, idx_prl_R30, idx_prl_L45, idx_prl_R45, idx_prl_L60, idx_prl_R60, idx_arc_L300, idx_arc_R300, idx_rot_L15, idx_rot_R15]
+#     # ||| ---------- end of director settings ---------- |||
 
 
 
-    # ----- decision making -----
-    # goal and obstacle
-    if ( flg_g and flg_p ):
+#     # ----- pre-processing -----
+#     tht_CRT_use = deg2rad*( 90.0*np.power( (tht_CRT/90.0), gamma ) )
 
-        if ( abs(tht_g) >= tht_g_CRT1 ):
-            if ( tht_g > 0) :
-                return idx_rot_R15
-            else:
-                return idx_rot_L15
+#     if ( flg_g == 1 ):
+#         tht_g = np.arctan2(off_g, dst_g)
+#         tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+#         tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
 
-        else:
-            return obs_AVD(tht_pass, tht_CRT_use, flg_pass, idx_set)
+#     if ( flg_p == 1 ):
+#         tht_p = np.arctan2(off_p, dst_p)
+#         r_DIR_pass = r_DIR_pass*( 1.0 - np.exp( (-1.0/mod_r_DIR)*dst_p ) )
+#         dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
+#         if ( abs(tht_p) < tht_p_DECI ): # if the obstacle is almost aligned with heading(not decisive)
+#             if ( flg_g == 1 ):
+#                 if ( abs(tht_g) > tht_g_DECI ): # if the goal position is decisive enough,
+#                     if ( tht_g < 0 ):
+#                         off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
+#                         flg_pass = -1
+#                     else:
+#                         off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+#                         flg_pass = 1
+#                 else:
+#                     off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+#                     flg_pass = 1
+#             else:
+#                 off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+#                 flg_pass = 1
+
+#         else:
+#             if ( tht_p > 0 ):
+#                 off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
+#                 flg_pass = -1
+#             else:
+#                 off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+#                 flg_pass = 1
+
+#         tht_pass = np.arctan2(off_pass, dst_pass)
+#         flg_pass = flg_pass*tht_pass
 
 
-    # goal, but no obstacle
-    elif ( (flg_g == 1) and (flg_p == 0) ):
 
-        if ( abs(tht_g) < tht_g_CRT2 ):
-            return idx_st
+#     # ----- decision making -----
+#     # goal and obstacle
+#     if ( flg_g and flg_p ):
 
-        elif ( abs(tht_g) < tht_g_CRT1 ):
-            if tht_g > 0:
-                return idx_arc_R300
-            else:
-                return idx_arc_L300
+#         if ( abs(tht_g) >= tht_g_CRT1 ):
+#             if ( tht_g > 0) :
+#                 return idx_rot_R15
+#             else:
+#                 return idx_rot_L15
 
-        else:
-            if tht_g > 0:
-                return idx_rot_R15
-            else:
-                return idx_rot_L15
+#         else:
+#             return obs_AVD(tht_pass, tht_CRT_use, flg_pass, idx_set)
 
 
-    # no goal, but obstacle
-    elif ( (flg_g == 0) and (flg_p == 1) ):
-        return obs_AVD(tht_pass, tht_CRT_use, flg_pass, idx_set)
+#     # goal, but no obstacle
+#     elif ( (flg_g == 1) and (flg_p == 0) ):
+
+#         if ( abs(tht_g) < tht_g_CRT2 ):
+#             return idx_st
+
+#         elif ( abs(tht_g) < tht_g_CRT1 ):
+#             if tht_g > 0:
+#                 return idx_arc_R300
+#             else:
+#                 return idx_arc_L300
+
+#         else:
+#             if tht_g > 0:
+#                 return idx_rot_R15
+#             else:
+#                 return idx_rot_L15
 
 
-    # no goal, no obstacle
-    else:
-        return idx_arc_R300
+#     # no goal, but obstacle
+#     elif ( (flg_g == 0) and (flg_p == 1) ):
+#         return obs_AVD(tht_pass, tht_CRT_use, flg_pass, idx_set)
 
-def obs_AVD_old1(tht_pass, tht_CRT_use, flg_pass, idx_set):
-        if ( ( abs(tht_pass) < tht_CRT_use[0] ) or (flg_pass < 0) ):
-               return idx_set[0]
 
-        elif ( abs(tht_pass) < tht_CRT_use[1] ):
-            if tht_pass > 0:
-                return idx_set[2]
-            else:
-                return idx_set[1]
+#     # no goal, no obstacle
+#     else:
+#         return idx_arc_R300
 
-        elif ( abs(tht_pass) < tht_CRT_use[2] ):
-                if tht_pass > 0:
-                    return idx_set[4]
-                else:
-                    return idx_set[3]
+# def obs_AVD_old1(tht_pass, tht_CRT_use, flg_pass, idx_set):
+#         if ( ( abs(tht_pass) < tht_CRT_use[0] ) or (flg_pass < 0) ):
+#                return idx_set[0]
 
-        elif ( abs(tht_pass) < tht_CRT_use[3] ):
-            if tht_pass > 0:
-                return idx_set[6]
-            else:
-                return idx_set[5]
+#         elif ( abs(tht_pass) < tht_CRT_use[1] ):
+#             if tht_pass > 0:
+#                 return idx_set[2]
+#             else:
+#                 return idx_set[1]
 
-        elif ( abs(tht_pass) >= tht_CRT_use[4] ):
-            if tht_pass > 0:
-                return idx_set[8]
-            else:
-                return idx_set[7]
+#         elif ( abs(tht_pass) < tht_CRT_use[2] ):
+#                 if tht_pass > 0:
+#                     return idx_set[4]
+#                 else:
+#                     return idx_set[3]
 
-        else:
-            if tht_pass > 0:
-                return idx_set[12]
-            else:
-                return idx_set[11]
+#         elif ( abs(tht_pass) < tht_CRT_use[3] ):
+#             if tht_pass > 0:
+#                 return idx_set[6]
+#             else:
+#                 return idx_set[5]
+
+#         elif ( abs(tht_pass) >= tht_CRT_use[4] ):
+#             if tht_pass > 0:
+#                 return idx_set[8]
+#             else:
+#                 return idx_set[7]
+
+#         else:
+#             if tht_pass > 0:
+#                 return idx_set[12]
+#             else:
+#                 return idx_set[11]
 
 def serial_connect():
     # ser_name = '/dev/ttyACM0'
