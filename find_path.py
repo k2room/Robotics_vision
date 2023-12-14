@@ -283,8 +283,7 @@ def stream(ser, use_window):
         ex_green = False
         msg_seq = []
         last_turn = ''
-        p = 30
-        n_obj = 5
+        n_obj = 1
         while True:
             # Wait for a coherent pair of frames: depth and color
             frames = pipeline.wait_for_frames()
@@ -318,7 +317,7 @@ def stream(ser, use_window):
             green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
             green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel)
 
-            # Visualize depth of red area
+            ##############################################################################################
             red_image = cv2.bitwise_and(color_image, color_image, mask=red_mask)
             # red_depth = cv2.bitwise_and(depth_colormap, depth_colormap, mask=red_mask)
             green_image = cv2.bitwise_and(color_image, color_image, mask=green_mask)
@@ -326,17 +325,6 @@ def stream(ser, use_window):
 
             # 깊이 이미지에서 빨간색 영역에 해당하는 깊이 데이터 추출
             red_depth_values = depth_image[red_mask != 0]
-
-            dist_transform = cv2.distanceTransform(green_mask, cv2.DIST_L2, 5) # 거리 변환 적용
-            ret, sure_fg = cv2.threshold(dist_transform, 0.7*dist_transform.max(), 255, 0) # 거리 변환 결과를 이진화하여 객체 분리
-            sure_fg = np.uint8(sure_fg) # 데이터 타입 변경
-            unknown = cv2.subtract(green_mask, sure_fg) # 거리 변환 결과와 원래 마스크를 이용하여 불확실한 영역(경계) 결정
-            ret, markers = cv2.connectedComponents(sure_fg) # 마커 레이블링
-            markers = markers + 1 
-            markers[unknown == 255] = 0 
-
-            markers = cv2.watershed(color_image, markers) # Watershed 알고리즘 적용
-            color_image[markers == -1] = [255, 0, 0]  # 경계에 빨간색 표시
             
             num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(green_mask, 8, cv2.CV_32S)
 
@@ -353,10 +341,16 @@ def stream(ser, use_window):
                 cv2.circle(green_image, centroid, 3, (255, 255, 255), -1)
             
             if object_areas:
-                largest_object_index = object_areas[0][0] # Get the largest green object's index
-                largest_object_mask = (labels == largest_object_index) # Create a mask for the largest green object
-                largest_object_depth_values = depth_image[largest_object_mask] # Extract depth values for the largest green object
-                
+                # Get the largest green object's index
+                largest_object_index = object_areas[0][0]
+
+                # Create a mask for the largest green object
+                largest_object_mask = (labels == largest_object_index)
+
+                # Extract depth values for the largest green object
+                largest_object_depth_values = depth_image[largest_object_mask]
+
+                # Calculate the average depth
                 if largest_object_depth_values.size > 0:  # Check if there are any depth values
                     obj_average_depth = np.mean(largest_object_depth_values)
                     obj_coord = relative_distance(obj_average_depth, centroid[0], FOV, stream_size)
@@ -364,6 +358,7 @@ def stream(ser, use_window):
             else:
                 ex_green = False
 
+            #########################################################################
             # 빨간색 영역의 중심 계산
             red_y, red_x = np.where(red_mask != 0)
             if red_x.size > 0 and red_y.size > 0:
@@ -428,8 +423,8 @@ def stream(ser, use_window):
     finally:
         # Stop streaming
         pipeline.stop()
-        if use_window:
-            cv2.destroyWindow('RealSense')
+        # if use_window:
+        #     cv2.destroyWindow('RealSense')
     
 
 if __name__=="__main__":
