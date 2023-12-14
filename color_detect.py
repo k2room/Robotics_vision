@@ -5,19 +5,306 @@ from IPython.display import clear_output  # Clear the screen
 import matplotlib.pyplot as plt           # 2D plotting library producing publication quality figures
 import pyrealsense2 as rs                 # Intel RealSense cross-platform open-source API
 import serial
+import time
 print("Environment Ready")
+
 
 
 # Aux.
 deg2rad = np.pi/180.0
 G_mem = 0
-dst_p_mem = 1.0
+dst_p_RST = 10.0
+dst_p_mem = dst_p_RST
+off_p_RST = 0.0
+off_p_mem = off_p_RST
 R_mem = 0   # has to be zero if the red marker is not initially given
 LMT_ENB = 0
 
 
 
 def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
+    global deg2rad, G_mem, dst_p_RST, dst_p_mem, off_p_mem, R_mem, LMT_ENB
+    # ||| ---------- director settings ---------- |||
+
+    # -------------------- pre-declarations --------------------
+    # discrete radius decider param.
+    global r_CRT
+    r_CRT = 1.4 * np.array([2.0, 1.5, 0.7, 0.6, 0.5, 0.35, 0.3, 0.25])  # metre
+
+    # VC_set index
+    global idx_st, \
+    \
+        idx_prl_L15, idx_prl_R15, \
+        idx_prl_L30, idx_prl_R30, \
+        idx_prl_L45, idx_prl_R45, \
+        idx_prl_L60, idx_prl_R60, \
+    \
+        idx_arc_L250, idx_arc_R250, \
+        idx_arc_L300, idx_arc_R300, \
+        idx_arc_L350, idx_arc_R350, \
+        idx_arc_L500, idx_arc_R500, \
+        idx_arc_L600, idx_arc_R600, \
+        idx_arc_L700, idx_arc_R700, \
+        idx_arc_L1500, idx_arc_R1500, \
+    \
+        idx_arc_L_LMT, idx_arc_R_LMT, \
+    \
+        idx_rot_L15, idx_rot_R15
+
+    # ----- forward -----
+    idx_st = 'g'
+
+    # ----- oblique line -----
+    idx_prl_L30 = 'g'
+    idx_prl_R30 = 'g'
+
+    # ----- arc -----
+    idx_arc_L250 = 'w'
+    idx_arc_R250 = 'q'
+
+    idx_arc_L300 = 'j'
+    idx_arc_R300 = 'd'
+
+    idx_arc_L350 = 'y'
+    idx_arc_R350 = 't'
+
+    idx_arc_L500 = 's'
+    idx_arc_R500 = 'h'
+
+    idx_arc_L600 = 'o'
+    idx_arc_R600 = 'p'
+
+    idx_arc_L700 = 'k'
+    idx_arc_R700 = 'f'
+
+    idx_arc_L1500 = 'u'
+    idx_arc_R1500 = 'v'
+
+    # ----- rotation -----
+    idx_rot_L15 = 'n'
+    idx_rot_R15 = 'm'
+
+    # -------------------- end of pre-declarations --------------------
+
+    # initial rotation direction to find goal
+    ini_rot = 'L'
+    # ini_rot = 'R'
+
+    # goal guidance param.
+    tht_g_CRT1 = deg2rad * 45.0
+    tht_g_CRT2 = deg2rad * 15.0
+    mod_tht_g_CRT = 0.40  # metre
+
+    # general avoidance param.
+    # - pass point locater
+    r_DIR_pass = 0.85
+    tht_DIR_pass = deg2rad*65.0
+    # - pass point refinement
+    mod_r_DIR1 = deg2rad*180     # half point
+    mod_r_DIR2 = 100.0   # > 1 for rapid transition
+    # - forced rotation criterion
+    tht_frcd_rot_CRT = deg2rad*40   # < 45 deg
+    r_frcd_rot_DRP = 10**(-3)   # safe radius that discrete radius decider will trigger rotation
+    # - limiter
+    dst_diff_CRIT = 0.3   # > 0, metre
+    off_diff_CRIT = 0.8   # > 0, metre
+    LMT_stp = 300
+    dst_EMR = 0.5   # metre
+    # -- limiter arc radius
+    LMT_r = r_CRT[3]  # metre
+    idx_arc_L_LMT = idx_arc_L600
+    idx_arc_R_LMT = idx_arc_R600
+
+    # ||| ---------- end of director settings ---------- |||
+
+
+
+    # ----- pre-processing -----
+    # when goal is detected
+    if flg_g == 1:
+        tht_g = np.arctan2(off_g, dst_g)
+        if tht_g > 0:
+            R_mem = 1
+        else:
+            R_mem = -1
+
+        tht_g_CRT1 = tht_g_CRT1*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+        tht_g_CRT2 = tht_g_CRT2*( 1.0 - np.exp( (-1.0/mod_tht_g_CRT)*dst_g ) )
+
+    # when obstacle is detected and goal has been detected
+    if ( flg_p == 1 ) and ( R_mem != 0 ):
+        tht_p = np.arctan2(off_p, dst_p)
+        r_DIR_pass = r_DIR_pass*( (1/np.pi)*np.arctan( (-mod_r_DIR2)*( abs(tht_p) - mod_r_DIR1 ) ) + 0.5 )
+        dst_pass = dst_p - r_DIR_pass*np.cos(tht_DIR_pass)
+
+        # G_mem reset process
+        dst_diff = dst_p - dst_p_mem
+        off_diff = abs(off_p - off_p_mem)
+        if ( dst_diff > dst_diff_CRIT ) or ( off_diff > off_diff_CRIT ) or ( G_mem == 0 ):
+            LMT_ENB = LMT_stp
+            if R_mem > 0:
+            #if ( ( R_mem > 0 ) and (tht_p < 0) ) or ( ( R_mem < 0 ) and (tht_p < 0) ):
+                G_mem = 1
+            else:
+                G_mem = -1
+        dst_p_mem = dst_p
+        off_p_mem = off_p
+
+        # locating pass point
+        if G_mem > 0:
+            off_pass = off_p + r_DIR_pass*np.sin(tht_DIR_pass)
+            flg_pass = 1
+        else:
+            off_pass = off_p - r_DIR_pass*np.sin(tht_DIR_pass)
+            flg_pass = -1
+
+        tht_pass = np.arctan2(off_pass, dst_pass)
+        flg_pass = flg_pass*tht_pass
+
+        # required radius calculation
+        if abs(tht_pass) < tht_frcd_rot_CRT:
+            r_pass = ( off_pass**2 + dst_pass**2 ) / (2*off_pass)
+        else:
+            if tht_pass > 0:
+                r_pass = r_frcd_rot_DRP
+            else:
+                r_pass = -r_frcd_rot_DRP
+
+        # arc radius limiter
+        if ( LMT_ENB > 0 ) and ( dst_p > dst_EMR ):
+            if abs(r_pass) < LMT_r:
+               r_pass = np.sign(r_pass)*LMT_r
+            LMT_ENB -= 1
+
+        elif dst_p <= dst_EMR:  # limiter overriding condition
+            if G_mem > 0:
+                r_pass = r_frcd_rot_DRP
+            else:
+                r_pass = -r_frcd_rot_DRP
+
+        print('')
+        print('R_PASS:', r_pass)
+        print('')
+
+    if ( dst_p_mem < dst_p_RST ) and ( flg_p == 0 ) and ( R_mem != 0 ):
+        LMT_ENB = LMT_stp
+        dst_p_mem = dst_p_RST
+
+
+
+    # ----- decision making -----
+    # when goal location has never been identified
+    if R_mem == 0:
+        if ini_rot == 'L':
+            return idx_rot_L15
+        else:
+            return idx_rot_R15
+
+    # general obstacle avoidance
+    elif flg_p == 1:
+        return arcDECI(r_pass, flg_pass)
+
+    # towards goal without obstacle in sight
+    elif ( flg_g == 1 ) and ( flg_p == 0 ) :
+
+        if abs(tht_g) < tht_g_CRT2:
+            return idx_st
+
+        elif ( abs(tht_g) < tht_g_CRT1 ) or ( LMT_ENB > 0 ):
+            if LMT_ENB > 0:
+                LMT_ENB -= 1
+
+            if tht_g > 0:
+                return idx_arc_R_LMT
+            else:
+                return idx_arc_L_LMT
+
+        else:
+            if tht_g > 0:
+                return idx_rot_R15
+            else:
+                return idx_rot_L15
+
+    # no goal or obstacle in sight
+    else:
+        print('')
+        print('LMT_ENB: ', LMT_ENB)
+        print('')
+        if LMT_ENB > 0:
+            LMT_ENB -= 1
+            if R_mem > 0:
+                return idx_arc_R_LMT
+            else:
+                return idx_arc_L_LMT
+
+        else:
+            if R_mem > 0:
+                return idx_rot_R15
+            else:
+                return idx_rot_L15
+
+
+
+def arcDECI(r_pass, flg_pass):
+    # criterion for going straight
+    if ( abs(r_pass) >= r_CRT[0] ) or ( flg_pass < 0 ):
+           return idx_st
+
+    # criteria for arcs
+    elif abs(r_pass) >= r_CRT[1]:
+        if r_pass > 0:
+            return idx_arc_R1500
+        else:
+            return idx_arc_L1500
+
+    elif abs(r_pass) >= r_CRT[2]:
+        if r_pass > 0:
+            return idx_arc_R700
+        else:
+            return idx_arc_L700
+
+    elif abs(r_pass) >= r_CRT[3]:
+        if r_pass > 0:
+            return idx_arc_R600
+        else:
+            return idx_arc_L600
+
+    elif abs(r_pass) >= r_CRT[4]:
+        if r_pass > 0:
+            return idx_arc_R500
+        else:
+            return idx_arc_L500
+
+    elif abs(r_pass) >= r_CRT[5]:
+        if r_pass > 0:
+            return idx_arc_R350
+        else:
+            return idx_arc_L350
+
+    elif abs(r_pass) >= r_CRT[6]:
+        if r_pass > 0:
+            return idx_arc_R300
+        else:
+            return idx_arc_L300
+
+    elif abs(r_pass) >= r_CRT[7]:
+        if r_pass > 0:
+            return idx_arc_R250
+        else:
+            return idx_arc_L250
+
+    # rotation
+    else:
+        if r_pass > 0:
+            return idx_rot_R15
+        else:
+            return idx_rot_L15
+
+
+
+
+
+def DRCTR_old2(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     global deg2rad, G_mem, dst_p_mem, R_mem, LMT_ENB
     # ||| ---------- director settings ---------- |||
     # NAV. tune
@@ -200,9 +487,7 @@ def DRCTR(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
             else:
                 return idx_rot_R15
             
-            
-
-def obs_AVD(r_pass, flg_pass):
+def obs_AVD_old2(r_pass, flg_pass):
         # criterion for going straight
         if ( abs(r_pass) > r_CRT[0] ) or ( flg_pass < 0 ):
                return idx_st
@@ -251,9 +536,7 @@ def obs_AVD(r_pass, flg_pass):
             else:
                 return idx_rot_L15
             
-
-
-def DRCTR_1(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
+def DRCTR_old1(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     # ||| ---------- director settings ---------- |||
     # NAV. tune
     tht_g_CRT1 = deg2rad*50.0
@@ -408,8 +691,7 @@ def DRCTR_1(off_g, dst_g, flg_g, off_p, dst_p, flg_p):
     else:
         return idx_arc_R300
 
-
-def obs_AVD_1(tht_pass, tht_CRT_use, flg_pass, idx_set):
+def obs_AVD_old1(tht_pass, tht_CRT_use, flg_pass, idx_set):
         if ( ( abs(tht_pass) < tht_CRT_use[0] ) or (flg_pass < 0) ):
                return idx_set[0]
 
@@ -560,9 +842,10 @@ def stream(ser, use_window):
         ex_green = False
         msg_seq = []
         last_turn = ''
-        p = 30
+        p = 8000
         n_obj = 1
         while True:
+            starttime = time.time()
             # Wait for a coherent pair of frames: depth and color
             frames = pipeline.wait_for_frames()
             depth_frame = frames.get_depth_frame()
@@ -585,7 +868,7 @@ def stream(ser, use_window):
 
             # Green color mask
             lower_green = np.array([50, 95, 0])
-            upper_green = np.array([120, 200, 75]) 
+            upper_green = np.array([115, 200, 70]) 
             green_mask = cv2.inRange(color_image, lower_green, upper_green)
 
             # 모폴로지 연산으로 노이즈 제거
@@ -608,34 +891,39 @@ def stream(ser, use_window):
 
 
             object_areas = [(i, area) for i, (x, y, w, h, area) in enumerate(stats) if i != 0 and area > p]
-            object_areas.sort(key=lambda x: x[1], reverse=True)  # Sort by area in descending order
-
-            for i, area in object_areas[:n_obj]:
-                x, y, w, h = stats[i][:4]
-                cv2.rectangle(color_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                cv2.rectangle(green_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                centroid = tuple(map(int, centroids[i]))
-                cv2.circle(color_image, centroid, 3, (255, 255, 255), -1)
-                cv2.circle(green_image, centroid, 3, (255, 255, 255), -1)
-            
-            if object_areas:
-                # Get the largest green object's index
-                largest_object_index = object_areas[0][0]
-
-                # Create a mask for the largest green object
-                largest_object_mask = (labels == largest_object_index)
-
-                # Extract depth values for the largest green object
-                largest_object_depth_values = depth_image[largest_object_mask]
-
-                # Calculate the average depth
-                if largest_object_depth_values.size > 0:  # Check if there are any depth values
-                    obj_average_depth = np.mean(largest_object_depth_values)
-                    obj_coord = relative_distance(obj_average_depth, centroid[0], FOV, stream_size)
-                ex_green = True
-            else:
+            if object_areas == []:
                 ex_green = False
+                obj_coord = [-777,-777]
+            else:
+                object_areas.sort(key=lambda x: x[1], reverse=True)  # Sort by area in descending order
 
+                for i, area in object_areas[:n_obj]:
+                    x, y, w, h = stats[i][:4]
+                    cv2.rectangle(color_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    cv2.rectangle(green_image, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                    centroid = tuple(map(int, centroids[i]))
+                    cv2.circle(color_image, centroid, 3, (255, 255, 255), -1)
+                    cv2.circle(green_image, centroid, 3, (255, 255, 255), -1)
+                
+                if object_areas:
+                    # Get the largest green object's index
+                    largest_object_index = object_areas[0][0]
+
+                    # Create a mask for the largest green object
+                    largest_object_mask = (labels == largest_object_index)
+
+                    # Extract depth values for the largest green object
+                    largest_object_depth_values = depth_image[largest_object_mask]
+
+                    # Calculate the average depth
+                    if largest_object_depth_values.size > 0:  # Check if there are any depth values
+                        obj_average_depth = np.mean(largest_object_depth_values)
+                        obj_coord = relative_distance(obj_average_depth, centroid[0], FOV, stream_size)
+                    ex_green = True
+                else:
+                    ex_green = False
+            # print(object_areas)
+            # print(ex_green)
             # 빨간색 영역의 중심 계산
             red_y, red_x = np.where(red_mask != 0)
             if red_x.size > 0 and red_y.size > 0:
@@ -669,7 +957,8 @@ def stream(ser, use_window):
             msg_seq.append(message)
 
             if len(msg_seq) == msg_period:
-                print("SEND MSG:", max(msg_seq).encode('utf-8'))
+                print("SEND MSG:", max(msg_seq).encode('utf-8'), "TIME:", starttime-time.time())
+
 
                 if ser !='':
                     ser.write(max(msg_seq).encode('utf-8'))
